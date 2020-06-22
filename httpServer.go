@@ -71,9 +71,9 @@ func handleAPI(cl *torrent.Client) {
 
 				serveTorrentFile(w, r, file)
 				//stop downloading the file when no connections left
-				if decFileClients(path) <= 0 {
-					stopDownloadFile(file)
-				}
+				// if decFileClients(path) <= 0 {
+				// 	stopDownloadFile(file)
+				// }
 			} else {
 				log.Println("Unknown torrent with infohash: ", vars["infohash"])
 				return

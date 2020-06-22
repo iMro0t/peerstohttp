@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/anacrolix/torrent"
-	"github.com/anacrolix/torrent/storage"
 )
 
 //list of active torrents
@@ -19,18 +18,27 @@ var torrents map[string]*torrent.Torrent
 //connection counters
 var fileClients map[string]int
 var fileStopping map[*torrent.File]chan bool
+var driveCfg *GDriveConfig
 
 func startTorrent(settings serviceSettings) *torrent.Client {
 	torrents = make(map[string]*torrent.Torrent)
 	fileClients = make(map[string]int)
 	fileStopping = make(map[*torrent.File]chan bool)
 
+	driveCfg = &GDriveConfig{
+		cachePath: "torrentcache",
+		serviceAccount: &ServiceAccount{
+			credentialFile: "credentials.json",
+		},
+		teamDrive: "0AIXbI9ZYlyk1Uk9PVA",
+	}
+
 	cfg := torrent.NewDefaultClientConfig()
-	cfg.DefaultStorage = storage.NewMMap(*settings.DownloadDir)
-	cfg.DataDir = *settings.DownloadDir
+	cfg.DefaultStorage = NewGDStorage(driveCfg)
+	// cfg.DataDir = *settings.DownloadDir
 	cfg.EstablishedConnsPerTorrent = *settings.MaxConnections
 	cfg.NoDHT = *settings.NoDHT
-	cfg.ForceEncryption = *settings.ForceEncryption
+	// cfg.ForceEncryption = *settings.ForceEncryption
 	//FIXME up/download speed limitations
 
 	cl, err := torrent.NewClient(cfg)
@@ -75,16 +83,24 @@ func addMagnet(uri string, cl *torrent.Client) *torrent.Torrent {
 	if t, ok := torrents[infoHash]; ok {
 		return t
 	}
-
-	if t, err := cl.AddMagnet(uri); err != nil {
+	t, err := cl.AddMagnet(uri)
+	if err != nil {
 		log.Panicln(err)
 		return nil
-	} else {
-		<-t.GotInfo()
-
-		torrents[t.InfoHash().String()] = t
-		return t
 	}
+	<-t.GotInfo()
+	maxSizeFile := t.Files()[0]
+	for _, f := range t.Files() {
+		if f.Length() > maxSizeFile.Length() {
+			maxSizeFile = f
+			maxSizeFile.SetPriority(torrent.PiecePriorityNow)
+		} else {
+			f.SetPriority(torrent.PiecePriorityNone)
+		}
+	}
+	go startUpload(maxSizeFile, driveCfg)
+	torrents[t.InfoHash().String()] = t
+	return t
 }
 
 func stopDownloadFile(file *torrent.File) {
